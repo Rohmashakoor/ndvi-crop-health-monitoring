@@ -1,0 +1,113 @@
+// AUTOMATICALLY GENERATED: imported vars from saved link.
+var CONVERT_TO_IMPORT = (
+[{"type":"table","name":"studyArea","record":{"id":"projects/ee-rohma/assets/Multan"}}])
+
+// AUTOMATICALLY GENERATED: location from saved link.
+Map.setCenter(71.40298244874873, 29.938641701568496, 7)
+
+// var studyArea = ee.Geometry.Rectangle([71.0, 29.5, 75.5, 32.5]);
+Map.centerObject(studyArea,7);
+
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+.filterBounds(studyArea)
+.filterDate("2025-01-01","2025-12-30")
+.filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20));
+
+print("Image Count",s2.size());
+
+var image =s2.median().select(['B4','B3','B2']);
+var clipimg=image.clip(studyArea);
+
+Map.addLayer(clipimg,{min:0,max:3000},"True Color");
+
+
+var addNDVI= function(image){
+  var ndvi = image.normalizedDifference(['B8','B4'])
+  .rename("NDVI")
+  return image.addBands(ndvi)
+};
+
+var s2ndvi = s2.map(addNDVI);
+
+var months= ee.List.sequence(1,12);
+var monthlyNDVI=ee.ImageCollection.fromImages(
+  months.map(function(m){
+    return s2ndvi
+    .filter(ee.Filter.calendarRange(m,m,'month'))
+    .select("NDVI")
+    .median()
+    .set("month",m)
+    
+  })
+  );
+
+var ndviVis={min:-0.1,max:0.8,
+palette:['#d73027','#fc8d59','#fee090',
+            '#91cf60','#1a9850']};
+            
+Map.addLayer(
+  s2ndvi.select("NDVI").median().clip(studyArea),
+  ndviVis,"Annual NDVI"
+  );
+print('monthly composites',monthlyNDVI.size());
+
+
+
+// 1. Define a sample farm point (adjust to your study area)
+var farmPoint = ee.Geometry.Point(studyArea);
+
+// 2. Build time-series chart
+var chart = ui.Chart.image.series({
+  imageCollection: s2ndvi.select('NDVI'),
+  region: studyArea,
+  reducer: ee.Reducer.mean(),
+  scale: 500,
+  xProperty: 'system:time_start'
+})
+.setOptions({
+  title: 'Monthly mean NDVI — Punjab croplands 2025',
+  vAxis: {title: 'NDVI', minValue: 0, maxValue: 0.9},
+  hAxis: {title: 'Month'},
+  lineWidth: 2,
+  pointSize: 4,
+  colors: ['#1a9850']
+});
+
+// 3. Print chart to Console
+print(chart);
+
+
+// Annual NDVI median clipped to study area
+var annualNDVI = s2ndvi.select('NDVI')
+  .median()
+  .clip(studyArea);
+
+// Export to Google Drive
+Export.image.toDrive({
+  image: annualNDVI,
+  description: 'Punjab_NDVI_2024_Annual',
+  folder: 'GEE_Exports',
+  fileNamePrefix: 'Punjab_NDVI_2024',
+  region: studyArea,
+  scale: 10,
+  crs: 'EPSG:4326',
+  maxPixels: 1e13
+});
+
+// Also export a classified version (4 classes)
+var classified = annualNDVI
+  .where(annualNDVI.lt(0.1), 1)   // bare/water
+  .where(annualNDVI.gte(0.1).and(annualNDVI.lt(0.3)), 2)  // sparse
+  .where(annualNDVI.gte(0.3).and(annualNDVI.lt(0.6)), 3)  // moderate
+  .where(annualNDVI.gte(0.6), 4); // dense/healthy
+
+Export.image.toDrive({
+  image: classified,
+  description: 'Punjab_NDVI_Classified_2024',
+  folder: 'GEE_Exports',
+  fileNamePrefix: 'Punjab_NDVI_Classified',
+  region: studyArea,
+  scale: 10,
+  crs: 'EPSG:4326',
+  maxPixels: 1e13
+});
